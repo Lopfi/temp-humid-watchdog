@@ -35,11 +35,11 @@ void setup() {
   Serial.println("WiFi connected");
   // Print the IP address
   Serial.print("IP address: ");
-  Serial.print(WiFi.localIP());
+  Serial.println(WiFi.localIP());
   ThingSpeak.begin(client);
 
   dht.begin();
-  Serial.println(F("DHTxx Unified Sensor Example"));
+  Serial.println("Everything ready...starting measurements...");
   sensor_t sensor;
 }
 
