@@ -4,7 +4,9 @@
 #include <DNSServer.h>
 #include <WiFiClient.h>
 #include <EEPROM.h>
-#include <ESP8266WebServer.h>
+#include <ESPAsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncElegantOTA.h>
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
@@ -18,7 +20,7 @@ boolean settingMode;
 String ssidList;
 
 DNSServer dnsServer;
-ESP8266WebServer webServer(80);
+AsyncWebServer  webServer(80);
 
 unsigned long myChannelNumber; //thingspeak channel number
 const char * myWriteAPIKey; //write key for thingspeak channel
@@ -46,8 +48,11 @@ void setup() {
             return;
         }
     }
-    settingMode = true;
-    setupMode();
+    else
+    {
+        settingMode = true;
+        setupMode();
+    }
 
     dht.begin();
     sensor_t sensor;
@@ -57,8 +62,6 @@ void loop() {
     if (settingMode) {
         dnsServer.processNextRequest();
     }
-
-    webServer.handleClient();
 
     if (readings <= readingsPerAvg && millis() - last > measureDelay && WiFi.status() == WL_CONNECTED) {
         sensors_event_t event;
@@ -132,21 +135,21 @@ void startWebServer() {
     if (settingMode) {
         Serial.print("Starting Web Server at ");
         Serial.println(WiFi.softAPIP());
-        webServer.on("/settings", []() {
+        webServer.on("/settings", [](AsyncWebServerRequest* request) {
             String s = "<h1>Wi-Fi Settings</h1><p>Please enter your password by selecting the SSID.</p>";
             s += "<form method=\"get\" action=\"setap\"><label>SSID: </label><select name=\"ssid\">";
             s += ssidList;
             s += "</select><br>Password: <input name=\"pass\" length=64 type=\"password\"><input type=\"submit\"></form>";
-            webServer.send(200, "text/html", makePage("Wi-Fi Settings", s));
+            request->send(200, "text/html", makePage("Wi-Fi Settings", s));
         });
-        webServer.on("/setap", []() {
+        webServer.on("/setap", [](AsyncWebServerRequest* request) {
             for (int i = 0; i < 96; ++i) {
                 EEPROM.write(i, 0);
             }
-            String ssid = urlDecode(webServer.arg("ssid"));
+            String ssid = urlDecode(request->getParam("ssid")->value().c_str());
             Serial.print("SSID: ");
             Serial.println(ssid);
-            String pass = urlDecode(webServer.arg("pass"));
+            String pass = urlDecode(request->getParam("pass")->value().c_str());
             Serial.print("Password: ");
             Serial.println(pass);
             Serial.println("Writing SSID to EEPROM...");
@@ -162,30 +165,31 @@ void startWebServer() {
             String s = "<h1>Setup complete.</h1><p>device will be connected to \"";
             s += ssid;
             s += "\" after the restart.";
-            webServer.send(200, "text/html", makePage("Wi-Fi Settings", s));
+            request->send(200, "text/html", makePage("Wi-Fi Settings", s));
             ESP.restart();
         });
-        webServer.onNotFound([]() {
+        webServer.onNotFound([](AsyncWebServerRequest* request) {
             String s = "<h1>AP mode</h1><p><a href=\"/settings\">Wi-Fi Settings</a></p>";
-            webServer.send(200, "text/html", makePage("AP mode", s));
+            request->send(200, "text/html", makePage("AP mode", s));
         });
     }
     else {
         Serial.print("Starting Web Server at ");
         Serial.println(WiFi.localIP());
-        webServer.on("/", []() {
+        webServer.on("/", [](AsyncWebServerRequest* request) {
             String s = "<h1>STA mode</h1><p><a href=\"/reset\">Reset Wi-Fi Settings</a></p>";
-            webServer.send(200, "text/html", makePage("STA mode", s));
+            request->send(200, "text/html", makePage("STA mode", s));
         });
-        webServer.on("/reset", []() {
+        webServer.on("/reset", [](AsyncWebServerRequest* request) {
             for (int i = 0; i < 96; ++i) {
                 EEPROM.write(i, 0);
             }
             EEPROM.commit();
             String s = "<h1>Wi-Fi settings was reset.</h1><p>Please reset device.</p>";
-            webServer.send(200, "text/html", makePage("Reset Wi-Fi Settings", s));
+            request->send(200, "text/html", makePage("Reset Wi-Fi Settings", s));
         });
     }
+    AsyncElegantOTA.begin(&webServer);
     webServer.begin();
 }
 
