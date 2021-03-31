@@ -1,5 +1,4 @@
-/* wifi setup by 9SQ https://github.com/9SQ/esp8266-wifi-setup */
-
+#include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <DNSServer.h>
 #include <WiFiClient.h>
@@ -10,7 +9,9 @@
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
-#include "ThingSpeak.h"
+#include <ThingSpeak.h>
+
+/* wifi setup by 9SQ https://github.com/9SQ/esp8266-wifi-setup */
 
 WiFiClient  client;
 
@@ -22,59 +23,54 @@ String ssidList;
 DNSServer dnsServer;
 AsyncWebServer  webServer(80);
 
-unsigned long myChannelNumber; //thingspeak channel number
-const char * myWriteAPIKey; //write key for thingspeak channel
+unsigned long myChannelNumber; // Thingspeak channel number
+const char * myWriteAPIKey; // Write key for thingspeak channel
 
 #define DHTPIN     2         // Pin connected to the DHT sensor.
 #define DHTTYPE    DHT11     // DHT 11
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
-float avgt = 0;
-float avgh = 0;
+float avgt = 0; // Average temperature
+float avgh = 0; // Average humidity
 
 int readings = 0;
 #define readingsPerAvg 16
 #define measureDelay 20000
 int last = millis();
 
-void setup() {
-    Serial.begin(115200);
-    EEPROM.begin(512);
-    delay(10);
-    if (restoreConfig()) {
-        if (checkConnection()) {
-            settingMode = false;
-            startWebServer();
-            return;
-        }
-    }
-    else
-    {
-        settingMode = true;
-        setupMode();
-    }
-
-    dht.begin();
-    sensor_t sensor;
-}
-
-void loop() {
-    if (settingMode) {
-        dnsServer.processNextRequest();
-    }
-
-    if (readings <= readingsPerAvg && millis() - last > measureDelay && WiFi.status() == WL_CONNECTED) {
-        sensors_event_t event;
-        dht.temperature().getEvent(&event);
-        avgt = avgt + event.temperature;
-        dht.humidity().getEvent(&event);
-        avgh = avgh + event.relative_humidity;
-        readings++;
-    }
-    else if (readings >= readingsPerAvg)
-    {
-        logData();
-    }
+String urlDecode(String input) {
+    String s = input;
+    s.replace("%20", " ");
+    s.replace("+", " ");
+    s.replace("%21", "!");
+    s.replace("%22", "\"");
+    s.replace("%23", "#");
+    s.replace("%24", "$");
+    s.replace("%25", "%");
+    s.replace("%26", "&");
+    s.replace("%27", "\'");
+    s.replace("%28", "(");
+    s.replace("%29", ")");
+    s.replace("%30", "*");
+    s.replace("%31", "+");
+    s.replace("%2C", ",");
+    s.replace("%2E", ".");
+    s.replace("%2F", "/");
+    s.replace("%2C", ",");
+    s.replace("%3A", ":");
+    s.replace("%3A", ";");
+    s.replace("%3C", "<");
+    s.replace("%3D", "=");
+    s.replace("%3E", ">");
+    s.replace("%3F", "?");
+    s.replace("%40", "@");
+    s.replace("%5B", "[");
+    s.replace("%5C", "\\");
+    s.replace("%5D", "]");
+    s.replace("%5E", "^");
+    s.replace("%5F", "-");
+    s.replace("%60", "`");
+    return s;
 }
 
 void logData() {
@@ -129,6 +125,17 @@ boolean checkConnection() {
     }
     Serial.println("Timed out.");
     return false;
+}
+
+String makePage(String title, String contents) {
+    String s = "<!DOCTYPE html><html><head>";
+    s += "<meta name=\"viewport\" content=\"width=device-width,user-scalable=0\">";
+    s += "<title>";
+    s += title;
+    s += "</title></head><body>";
+    s += contents;
+    s += "</body></html>";
+    return s;
 }
 
 void startWebServer() {
@@ -218,48 +225,42 @@ void setupMode() {
     Serial.println("\"");
 }
 
-String makePage(String title, String contents) {
-    String s = "<!DOCTYPE html><html><head>";
-    s += "<meta name=\"viewport\" content=\"width=device-width,user-scalable=0\">";
-    s += "<title>";
-    s += title;
-    s += "</title></head><body>";
-    s += contents;
-    s += "</body></html>";
-    return s;
+void setup() {
+    Serial.begin(115200);
+    EEPROM.begin(512);
+    delay(10);
+    if (restoreConfig()) {
+        if (checkConnection()) {
+            settingMode = false;
+            startWebServer();
+            return;
+        }
+    }
+    else
+    {
+        settingMode = true;
+        setupMode();
+    }
+
+    dht.begin();
+    sensor_t sensor;
 }
 
-String urlDecode(String input) {
-    String s = input;
-    s.replace("%20", " ");
-    s.replace("+", " ");
-    s.replace("%21", "!");
-    s.replace("%22", "\"");
-    s.replace("%23", "#");
-    s.replace("%24", "$");
-    s.replace("%25", "%");
-    s.replace("%26", "&");
-    s.replace("%27", "\'");
-    s.replace("%28", "(");
-    s.replace("%29", ")");
-    s.replace("%30", "*");
-    s.replace("%31", "+");
-    s.replace("%2C", ",");
-    s.replace("%2E", ".");
-    s.replace("%2F", "/");
-    s.replace("%2C", ",");
-    s.replace("%3A", ":");
-    s.replace("%3A", ";");
-    s.replace("%3C", "<");
-    s.replace("%3D", "=");
-    s.replace("%3E", ">");
-    s.replace("%3F", "?");
-    s.replace("%40", "@");
-    s.replace("%5B", "[");
-    s.replace("%5C", "\\");
-    s.replace("%5D", "]");
-    s.replace("%5E", "^");
-    s.replace("%5F", "-");
-    s.replace("%60", "`");
-    return s;
+void loop() {
+    if (settingMode) {
+        dnsServer.processNextRequest();
+    }
+
+    if (readings <= readingsPerAvg && millis() - last > measureDelay && WiFi.status() == WL_CONNECTED) {
+        sensors_event_t event;
+        dht.temperature().getEvent(&event);
+        avgt = avgt + event.temperature;
+        dht.humidity().getEvent(&event);
+        avgh = avgh + event.relative_humidity;
+        readings++;
+    }
+    else if (readings >= readingsPerAvg)
+    {
+        logData();
+    }
 }
