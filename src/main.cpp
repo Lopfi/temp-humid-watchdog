@@ -10,21 +10,24 @@
 #include <DHT.h>
 #include <DHT_U.h>
 #include <ThingSpeak.h>
+#include <LittleFS.h>
 
 /* wifi setup by 9SQ https://github.com/9SQ/esp8266-wifi-setup */
 
 WiFiClient  client;
 
-const IPAddress apIP(192, 168, 1, 1);
-const char* apSSID = "ESP8266_SETUP";
+const IPAddress apIP(192, 168, 1, 1); // IP-Address of the accespoint when in setup mode
+const char* apSSID = "temp-humid-watchdog"; // Name of the Wifi when in setup mode
 boolean settingMode;
-String ssidList;
+String ssidList; // List of the ssids of all available networks
 
 DNSServer dnsServer;
-AsyncWebServer  webServer(80);
+AsyncWebServer  webServer(80); // Asynchronous webserver on port 80
 
-unsigned long myChannelNumber; // Thingspeak channel number
-const char * myWriteAPIKey; // Write key for thingspeak channel
+unsigned long channelID; // Thingspeak channel id
+char * APIKey; // Write key for thingspeak channel
+int tempField = 1;
+int humidField = 2;
 
 #define DHTPIN     2         // Pin connected to the DHT sensor.
 #define DHTTYPE    DHT11     // DHT 11
@@ -33,11 +36,12 @@ DHT_Unified dht(DHTPIN, DHTTYPE);
 float avgt = 0; // Average temperature
 float avgh = 0; // Average humidity
 
-int readings = 0;
-#define readingsPerAvg 16
-#define measureDelay 20000
-int last = millis();
+int readings = 0; // Count of how many readings have been taken
+#define readingsPerAvg 16 // How many readings to take per average 
+#define measureDelay 20000 // Delay between each reading
+int last = millis(); // Time since last reading
 
+// Decode special signs from Strings
 String urlDecode(String input) {
     String s = input;
     s.replace("%20", " ");
@@ -73,35 +77,40 @@ String urlDecode(String input) {
     return s;
 }
 
-void logData() {
-    avgt = avgt / readingsPerAvg;
-    avgh = avgh / readingsPerAvg;
-    Serial.print("Temperature: ");
-    Serial.print(avgt);
-    Serial.print("  |  Humidity: ");
-    Serial.println(avgh);
-
-    ThingSpeak.setField(1, avgt);
-    ThingSpeak.setField(2, avgh);
-    ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
-}
-
 boolean restoreConfig() {
     Serial.println("Reading EEPROM...");
     String ssid = "";
     String pass = "";
+    String chanID = "";
     if (EEPROM.read(0) != 0) {
+        // Wifi SSID
         for (int i = 0; i < 32; ++i) {
             ssid += char(EEPROM.read(i));
         }
         Serial.print("SSID: ");
         Serial.println(ssid);
+        // Wifi password
         for (int i = 32; i < 96; ++i) {
             pass += char(EEPROM.read(i));
         }
+        /*
         Serial.print("Password: ");
         Serial.println(pass);
         WiFi.begin(ssid.c_str(), pass.c_str());
+        // Thingspeak channel ID
+        for (int i = 96; i < 100; ++i) {
+            chanID += char(EEPROM.read(i));
+        }
+        channelID = chanID.toInt();
+        Serial.print("Channel ID: ");
+        Serial.println(chanID);
+        // Thingspeak API key
+        for (int i = 100; i < 164; ++i) {
+            APIKey += char(EEPROM.read(i));
+        }
+        Serial.print("API key: ");
+        Serial.println(APIKey);
+        */
         return true;
     }
     else {
@@ -127,73 +136,57 @@ boolean checkConnection() {
     return false;
 }
 
-String makePage(String title, String contents) {
-    String s = "<!DOCTYPE html><html><head>";
-    s += "<meta name=\"viewport\" content=\"width=device-width,user-scalable=0\">";
-    s += "<title>";
-    s += title;
-    s += "</title></head><body>";
-    s += contents;
-    s += "</body></html>";
-    return s;
-}
-
 void startWebServer() {
     if (settingMode) {
         Serial.print("Starting Web Server at ");
         Serial.println(WiFi.softAPIP());
+
         webServer.on("/settings", [](AsyncWebServerRequest* request) {
-            String s = "<h1>Wi-Fi Settings</h1><p>Please enter your password by selecting the SSID.</p>";
-            s += "<form method=\"get\" action=\"setap\"><label>SSID: </label><select name=\"ssid\">";
-            s += ssidList;
-            s += "</select><br>Password: <input name=\"pass\" length=64 type=\"password\"><input type=\"submit\"></form>";
-            request->send(200, "text/html", makePage("Wi-Fi Settings", s));
-        });
-        webServer.on("/setap", [](AsyncWebServerRequest* request) {
-            for (int i = 0; i < 96; ++i) {
-                EEPROM.write(i, 0);
-            }
-            String ssid = urlDecode(request->getParam("ssid")->value().c_str());
-            Serial.print("SSID: ");
-            Serial.println(ssid);
-            String pass = urlDecode(request->getParam("pass")->value().c_str());
-            Serial.print("Password: ");
-            Serial.println(pass);
-            Serial.println("Writing SSID to EEPROM...");
-            for (int i = 0; i < ssid.length(); ++i) {
-                EEPROM.write(i, ssid[i]);
-            }
-            Serial.println("Writing Password to EEPROM...");
-            for (int i = 0; i < pass.length(); ++i) {
-                EEPROM.write(32 + i, pass[i]);
-            }
-            EEPROM.commit();
-            Serial.println("Write EEPROM done!");
-            String s = "<h1>Setup complete.</h1><p>device will be connected to \"";
-            s += ssid;
-            s += "\" after the restart.";
-            request->send(200, "text/html", makePage("Wi-Fi Settings", s));
-            ESP.restart();
-        });
-        webServer.onNotFound([](AsyncWebServerRequest* request) {
-            String s = "<h1>AP mode</h1><p><a href=\"/settings\">Wi-Fi Settings</a></p>";
-            request->send(200, "text/html", makePage("AP mode", s));
+            request->send(LittleFS, "text/html", "index.html");
         });
     }
     else {
         Serial.print("Starting Web Server at ");
         Serial.println(WiFi.localIP());
+
+                    // Initialize FS
+        Serial.println(F("Inizializing FS..."));
+        if (LittleFS.begin()){
+            Serial.println(F("done."));
+        }else{
+            Serial.println(F("fail."));
+        }
+
+        FSInfo fs_info;
+        LittleFS.info(fs_info);
+        Serial.println("Files");
+        // Open dir folder
+        Dir dir = LittleFS.openDir("/");
+        // Cycle all the content
+        while (dir.next()) {
+            // get filename
+            Serial.print(dir.fileName());
+            Serial.print(" - ");
+            // If element have a size display It else write 0
+            if(dir.fileSize()) {
+                File f = dir.openFile("r");
+                Serial.println(f.size());
+                f.close();
+            }else{
+                Serial.println("0");
+            }
+        }
+
         webServer.on("/", [](AsyncWebServerRequest* request) {
-            String s = "<h1>STA mode</h1><p><a href=\"/reset\">Reset Wi-Fi Settings</a></p>";
-            request->send(200, "text/html", makePage("STA mode", s));
+            request->send(LittleFS, "/index.html", "text/html");
         });
         webServer.on("/reset", [](AsyncWebServerRequest* request) {
-            for (int i = 0; i < 96; ++i) {
+            for (int i = 0; i < EEPROM.length(); ++i) {
                 EEPROM.write(i, 0);
             }
             EEPROM.commit();
-            String s = "<h1>Wi-Fi settings was reset.</h1><p>Please reset device.</p>";
-            request->send(200, "text/html", makePage("Reset Wi-Fi Settings", s));
+            String s = "Settings have been restored. Please reset device.";
+            request->send(200, "text/plain", s);
         });
     }
     AsyncElegantOTA.begin(&webServer);
@@ -226,13 +219,13 @@ void setupMode() {
 }
 
 void setup() {
-    Serial.begin(115200);
-    EEPROM.begin(512);
-    delay(10);
-    if (restoreConfig()) {
-        if (checkConnection()) {
+    Serial.begin(115200); // Beginn serial communication on 115200 baud
+    EEPROM.begin(512); // Initialize a 512 byte eeprom space
+    delay(10); // Wait for MCU to process
+    if (restoreConfig()) { // Check if old wireless configuration is available
+        if (checkConnection()) { // Check if connencted to wifi
             settingMode = false;
-            startWebServer();
+            startWebServer(); // Start the webserver
             return;
         }
     }
@@ -243,7 +236,6 @@ void setup() {
     }
 
     dht.begin();
-    sensor_t sensor;
 }
 
 void loop() {
@@ -261,6 +253,16 @@ void loop() {
     }
     else if (readings >= readingsPerAvg)
     {
-        logData();
+        // Calculate average and send them to serial as well as upload to thingspeak
+        avgt = avgt / readingsPerAvg;
+        avgh = avgh / readingsPerAvg;
+        Serial.print("Temperature: ");
+        Serial.print(avgt);
+        Serial.print("  |  Humidity: ");
+        Serial.println(avgh);
+
+        ThingSpeak.setField(tempField, avgt);
+        ThingSpeak.setField(humidField, avgh);
+        ThingSpeak.writeFields(channelID, APIKey);
     }
 }

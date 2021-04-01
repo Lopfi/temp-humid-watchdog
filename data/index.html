@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Temp-Humid-Watchdog</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+    <h1>Setup</h1>
+    <p>Please fill out all the forms below</p>
+    <div id="settings">
+        <form>
+            <label for="fname">First name:</label><br>
+            <input type="text" id="fname" name="fname"><br>
+            <label for="lname">Last name:</label><br>
+            <input type="text" id="lname" name="lname">
+        </form>
+    </div>
+</body>
+<script>
+    setInterval(function ( ) {
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function() {
+            if (this.readyState == 4 && this.status == 200) {
+            document.getElementById("temperature").innerHTML = this.responseText;
+            }
+        };
+        xhttp.open("GET", "/temperature", true);
+        xhttp.send();
+    }, 10000 ) ;
+
+    setInterval(function ( ) {
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function() {
+            if (this.readyState == 4 && this.status == 200) {
+            document.getElementById("humidity").innerHTML = this.responseText;
+            }
+        };
+        xhttp.open("GET", "/humidity", true);
+        xhttp.send();
+    }, 10000 ) ;
+</script>
+</html>
