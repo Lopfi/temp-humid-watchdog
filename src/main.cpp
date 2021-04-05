@@ -97,6 +97,7 @@ boolean restoreConfig() {
         Serial.print("Password: ");
         Serial.println(pass);
         WiFi.begin(ssid.c_str(), pass.c_str());
+
         // Thingspeak channel ID
         for (int i = 96; i < 100; ++i) {
             chanID += char(EEPROM.read(i));
@@ -142,40 +143,48 @@ void startWebServer() {
         Serial.println(WiFi.softAPIP());
 
         webServer.on("/settings", [](AsyncWebServerRequest* request) {
-            request->send(LittleFS, "text/html", "index.html");
+            request->send(LittleFS, "text/html", "settings.html");
         });
+
+        webServer.on("/setall", [](AsyncWebServerRequest* request) {
+            for (int i = 0; i < 96; ++i) {
+                EEPROM.write(i, 0);
+            }
+            String ssid = urlDecode(request->arg("ssid"));
+            Serial.print("SSID: ");
+            Serial.println(ssid);
+            String pass = urlDecode(request->arg("pass"));
+            Serial.print("Password: ");
+            Serial.println(pass);
+            String chanid = urlDecode(request->arg("chanid"));
+            Serial.print("Channel ID: ");
+            Serial.println(chanid);
+            String apikey = urlDecode(request->arg("apikey"));
+            Serial.print("API key: ");
+            Serial.println(apikey);
+
+            Serial.println("Writing to EEPROM...");
+            for (int i = 0; i < ssid.length(); ++i) {
+                EEPROM.write(i, ssid[i]);
+            }
+            for (int i = 0; i < pass.length(); ++i) {
+                EEPROM.write(32 + i, pass[i]);
+            }
+            for (int i = 0; i < chanid.length(); ++i) {
+                EEPROM.write(96 + i, chanid[i]);
+            }
+            for (int i = 0; i < apikey.length(); ++i) {
+                EEPROM.write(100 + i, apikey[i]);
+            }
+            EEPROM.commit();
+            Serial.println("Write EEPROM done!");
+            ESP.restart();
+    });
+
     }
     else {
         Serial.print("Starting Web Server at ");
         Serial.println(WiFi.localIP());
-
-                    // Initialize FS
-        Serial.println(F("Inizializing FS..."));
-        if (LittleFS.begin()){
-            Serial.println(F("done."));
-        }else{
-            Serial.println(F("fail."));
-        }
-
-        FSInfo fs_info;
-        LittleFS.info(fs_info);
-        Serial.println("Files");
-        // Open dir folder
-        Dir dir = LittleFS.openDir("/");
-        // Cycle all the content
-        while (dir.next()) {
-            // get filename
-            Serial.print(dir.fileName());
-            Serial.print(" - ");
-            // If element have a size display It else write 0
-            if(dir.fileSize()) {
-                File f = dir.openFile("r");
-                Serial.println(f.size());
-                f.close();
-            }else{
-                Serial.println("0");
-            }
-        }
 
         webServer.on("/", [](AsyncWebServerRequest* request) {
             request->send(LittleFS, "/index.html", "text/html");
@@ -222,6 +231,17 @@ void setup() {
     Serial.begin(115200); // Beginn serial communication on 115200 baud
     EEPROM.begin(512); // Initialize a 512 byte eeprom space
     delay(10); // Wait for MCU to process
+    
+    dht.begin();
+
+    // Initialize FS
+    Serial.println(F("Inizializing FS..."));
+    if (LittleFS.begin()){
+        Serial.println(F("done."));
+    }else{
+        Serial.println(F("fail."));
+    }
+
     if (restoreConfig()) { // Check if old wireless configuration is available
         if (checkConnection()) { // Check if connencted to wifi
             settingMode = false;
@@ -234,8 +254,6 @@ void setup() {
         settingMode = true;
         setupMode();
     }
-
-    dht.begin();
 }
 
 void loop() {
@@ -246,9 +264,9 @@ void loop() {
     if (readings <= readingsPerAvg && millis() - last > measureDelay && WiFi.status() == WL_CONNECTED) {
         sensors_event_t event;
         dht.temperature().getEvent(&event);
-        avgt = avgt + event.temperature;
+        avgt += event.temperature;
         dht.humidity().getEvent(&event);
-        avgh = avgh + event.relative_humidity;
+        avgh += event.relative_humidity;
         readings++;
     }
     else if (readings >= readingsPerAvg)
