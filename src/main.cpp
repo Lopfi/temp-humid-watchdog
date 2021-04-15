@@ -25,13 +25,13 @@ DNSServer dnsServer;
 AsyncWebServer  webServer(80); // Asynchronous webserver on port 80
 
 unsigned long channelID; // Thingspeak channel id
-char * APIKey; // Write key for thingspeak channel
-int tempField = 1;
-int humidField = 2;
+char *APIKey; // Write key for thingspeak channel
+int tempField = 1; // thingspeak temperature field
+int humidField = 2; // thingspeak humidity field
 
 #define DHTPIN     2         // Pin connected to the DHT sensor.
 #define DHTTYPE    DHT11     // DHT 11
-DHT_Unified dht(DHTPIN, DHTTYPE);
+DHT_Unified dht(DHTPIN, DHTTYPE); // create new dht object
 
 float avgt = 0; // Average temperature
 float avgh = 0; // Average humidity
@@ -77,11 +77,23 @@ String urlDecode(String input) {
     return s;
 }
 
+char *append(const char *s, char c) {
+    int len = strlen(s);
+    char buf[len+2];
+    strcpy(buf, s);
+    buf[len] = c;
+    buf[len + 1] = 0;
+    return strdup(buf);
+}
+
+// read all settings from eeprom
 boolean restoreConfig() {
     Serial.println("Reading EEPROM...");
     String ssid = "";
     String pass = "";
     String chanID = "";
+    char* apikey = "";
+
     if (EEPROM.read(0) != 0) {
         // Wifi SSID
         for (int i = 0; i < 32; ++i) {
@@ -93,25 +105,27 @@ boolean restoreConfig() {
         for (int i = 32; i < 96; ++i) {
             pass += char(EEPROM.read(i));
         }
-        /*
+        
         Serial.print("Password: ");
         Serial.println(pass);
         WiFi.begin(ssid.c_str(), pass.c_str());
 
         // Thingspeak channel ID
-        for (int i = 96; i < 100; ++i) {
+        for (int i = 96; i < 103; ++i) {
             chanID += char(EEPROM.read(i));
         }
         channelID = chanID.toInt();
         Serial.print("Channel ID: ");
         Serial.println(chanID);
         // Thingspeak API key
-        for (int i = 100; i < 164; ++i) {
-            APIKey += char(EEPROM.read(i));
+        for (int i = 103; i < 119; ++i) {
+            apikey = append(apikey, char(EEPROM.read(i)));
         }
+        //apikey.toCharArray(APIKey, apikey.length());
+        APIKey = apikey; //strdup(apikey);
         Serial.print("API key: ");
-        Serial.println(APIKey);
-        */
+        Serial.println(apikey);
+               
         return true;
     }
     else {
@@ -120,6 +134,7 @@ boolean restoreConfig() {
     }
 }
 
+// check if connected to wifi
 boolean checkConnection() {
     int count = 0;
     Serial.print("Waiting for Wi-Fi connection");
@@ -137,13 +152,14 @@ boolean checkConnection() {
     return false;
 }
 
+// start up the  webserver with eather settings or index page
 void startWebServer() {
     if (settingMode) {
         Serial.print("Starting Web Server at ");
         Serial.println(WiFi.softAPIP());
 
-        webServer.on("/settings", [](AsyncWebServerRequest* request) {
-            request->send(LittleFS, "text/html", "settings.html");
+        webServer.on("/", [](AsyncWebServerRequest* request) {
+            request->send(LittleFS, "/settings.html", "text/html");
         });
 
         webServer.on("/setall", [](AsyncWebServerRequest* request) {
@@ -174,13 +190,13 @@ void startWebServer() {
                 EEPROM.write(96 + i, chanid[i]);
             }
             for (int i = 0; i < apikey.length(); ++i) {
-                EEPROM.write(100 + i, apikey[i]);
+                EEPROM.write(103 + i, apikey[i]);
             }
             EEPROM.commit();
             Serial.println("Write EEPROM done!");
             ESP.restart();
     });
-
+    
     }
     else {
         Serial.print("Starting Web Server at ");
@@ -198,10 +214,12 @@ void startWebServer() {
             request->send(200, "text/plain", s);
         });
     }
-    AsyncElegantOTA.begin(&webServer);
     webServer.begin();
+    AsyncElegantOTA.begin(&webServer);
+    
 }
 
+// set mode to setupMode
 void setupMode() {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
@@ -225,6 +243,22 @@ void setupMode() {
     Serial.print("Starting Access Point at \"");
     Serial.print(apSSID);
     Serial.println("\"");
+    // Open dir folder
+    Dir dir = LittleFS.openDir("/");
+    // Cycle all the content
+    while (dir.next()) {
+        // get filename
+        Serial.print(dir.fileName());
+        Serial.print(" - ");
+        // If element have a size display It else write 0
+        if(dir.fileSize()) {
+            File f = dir.openFile("r");
+            Serial.println(f.size());
+            f.close();
+        }else{
+            Serial.println("0");
+        }
+    }
 }
 
 void setup() {
@@ -232,7 +266,9 @@ void setup() {
     EEPROM.begin(512); // Initialize a 512 byte eeprom space
     delay(10); // Wait for MCU to process
     
-    dht.begin();
+    dht.begin(); // start the dht sensor
+
+    ThingSpeak.begin(client);  // Initialize ThingSpeak
 
     // Initialize FS
     Serial.println(F("Inizializing FS..."));
@@ -251,9 +287,11 @@ void setup() {
     }
     else
     {
-        settingMode = true;
-        setupMode();
+        settingMode = true; // set mode to setting mode
+        setupMode(); // execute setupmode
     }
+
+    
 }
 
 void loop() {
@@ -261,9 +299,11 @@ void loop() {
         dnsServer.processNextRequest();
     }
 
-    if (readings <= readingsPerAvg && millis() - last > measureDelay && WiFi.status() == WL_CONNECTED) {
+    // if connected to wifi & the delay has passed as well as the max readings per average havent been reached
+    if (readings <= readingsPerAvg && millis() > measureDelay + last && WiFi.status() == WL_CONNECTED) {
+        last = millis();
         sensors_event_t event;
-        dht.temperature().getEvent(&event);
+        dht.temperature().getEvent(&event); 
         avgt += event.temperature;
         dht.humidity().getEvent(&event);
         avgh += event.relative_humidity;
@@ -281,6 +321,13 @@ void loop() {
 
         ThingSpeak.setField(tempField, avgt);
         ThingSpeak.setField(humidField, avgh);
-        ThingSpeak.writeFields(channelID, APIKey);
+        int x = ThingSpeak.writeFields(channelID, APIKey);
+
+        if(x == 200){
+            Serial.println("Channel update successful.");
+        }
+        else{
+            Serial.println("Problem updating channel. HTTP error code " + String(x));
+        }
     }
 }
